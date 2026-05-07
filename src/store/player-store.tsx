@@ -1,3 +1,4 @@
+import { AppState } from 'react-native';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import * as DB from '../services/db';
 import type { UserPlaylist } from '../services/db';
@@ -18,6 +19,7 @@ type MusicContextType = {
   currentIndex: number;
   playing: boolean;
   time: number;
+  displayTime: number;
   duration: number;
   volume: number;
   repeat: RepeatMode;
@@ -38,7 +40,9 @@ type MusicContextType = {
   likedSongs: YTVideo[];
   userPlaylists: UserPlaylist[];
   current: YTVideo | null;
+  hasActiveMedia: boolean;
   shownPlaylistSongs: YTVideo[];
+  isSeeking: boolean;
   setView: (v: ViewMode) => void;
   setQuery: (q: string) => void;
   setSearchTab: (tab: 'songs' | 'playlists') => void;
@@ -59,6 +63,11 @@ type MusicContextType = {
   createPlaylist: (name: string) => Promise<boolean>;
   addToPlaylist: (playlistId: string, track: YTVideo) => Promise<void>;
   removeFromPlaylist: (playlistId: string, videoId: string) => Promise<void>;
+  seekTo: (seconds: number) => void;
+  beginSeek: (seconds: number) => void;
+  updateSeek: (seconds: number) => void;
+  endSeek: (seconds: number) => void;
+  cancelSeek: () => void;
   handlePlayerMessage: (msg: PlayerMessage) => void;
   registerSender: (fn: (data: any) => void) => void;
 };
@@ -68,12 +77,23 @@ const MusicContext = createContext<MusicContextType | null>(null);
 export function MusicProvider({ children }: { children: React.ReactNode }) {
   const senderRef = useRef<(data: any) => void>(() => {});
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Tracks whether we *intended* the player to be playing. Prevents a
+  // buffering-induced YouTube state=1 (playing) event from overriding an
+  // intentional pause.
+  const intendedPlayRef = useRef(false);
+  // The position we last explicitly seeked to. After a seek, incoming ticks
+  // that report the old position (before YouTube has confirmed the new one) are
+  // ignored so the slider/timer never snap back. Reset to -1 once a tick
+  // confirms we've arrived near the target.
+  const lastSeekRef = useRef(-1);
 
   const [ready, setReady] = useState(false);
   const [queue, setQueue] = useState<YTVideo[]>([]);
   const [currentIndex, setCurrentIndex] = useState(-1);
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
+  const [seekTime, setSeekTime] = useState(0);
+  const [isSeeking, setIsSeeking] = useState(false);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(70);
   const [repeat, setRepeat] = useState<RepeatMode>('off');
@@ -97,8 +117,11 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const [searchVideoToken, setSearchVideoToken] = useState<string | null>(null);
   const [searchPlaylistToken, setSearchPlaylistToken] = useState<string | null>(null);
   const [playlistToken, setPlaylistToken] = useState<string | null>(null);
+  const [isAppForeground, setIsAppForeground] = useState(true);
 
   const current = currentIndex >= 0 ? queue[currentIndex] : null;
+  const hasActiveMedia = !!current && (duration > 0 || time > 0 || playing);
+  const displayTime = isSeeking ? seekTime : time;
   const shownPlaylistSongs = activeUserPlaylist ? activeUserPlaylist.songs : activePlaylist ? playlistSongs : likedSongs;
 
   const flash = useCallback((message: string) => {
@@ -140,16 +163,26 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   }, [loadHome]);
 
   useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      setIsAppForeground(state === 'active');
+    });
+    return () => sub.remove();
+  }, []);
+
+  useEffect(() => {
     if (timerRef.current) clearInterval(timerRef.current);
-    if (playing) timerRef.current = setInterval(() => sendPlayer({ type: 'tick' }), 500);
+    if (playing && isAppForeground) timerRef.current = setInterval(() => sendPlayer({ type: 'tick' }), 500);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [playing, sendPlayer]);
+  }, [isAppForeground, playing, sendPlayer]);
 
   useEffect(() => {
     if (ready) sendPlayer({ type: 'volume', volume });
   }, [ready, sendPlayer, volume]);
 
   const playTrack = (track: YTVideo, sourceList?: YTVideo[]) => {
+    // Check before mutating queue/index so `current` still reflects reality.
+    const alreadyCurrent = current?.videoId === track.videoId;
+
     if (sourceList?.length) {
       const idx = sourceList.findIndex((item) => item.videoId === track.videoId);
       if (idx >= 0) {
@@ -164,8 +197,19 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         setCurrentIndex(queue.length);
       }
     }
+
+    if (alreadyCurrent) {
+      // Same track already loaded — just resume without restarting from 0.
+      intendedPlayRef.current = true;
+      if (!playing) sendPlayer({ type: 'play' });
+      setPlaying(true);
+      return;
+    }
+
+    lastSeekRef.current = -1;
     setTime(0);
     setDuration(track.duration);
+    intendedPlayRef.current = true;
     sendPlayer({ type: 'load', videoId: track.videoId });
     setPlaying(true);
   };
@@ -176,6 +220,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     setCurrentIndex(start);
     setTime(0);
     setDuration(songs[start]?.duration || 0);
+    intendedPlayRef.current = true;
     sendPlayer({ type: 'load', videoId: songs[start].videoId });
     setPlaying(true);
   };
@@ -194,8 +239,10 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     }
     setCurrentIndex(nextIndex);
     const nextTrack = queue[nextIndex];
+    lastSeekRef.current = -1;
     setTime(0);
     setDuration(nextTrack.duration);
+    intendedPlayRef.current = true;
     sendPlayer({ type: 'load', videoId: nextTrack.videoId });
     setPlaying(true);
   }, [currentIndex, queue, repeat, sendPlayer, shuffle]);
@@ -205,8 +252,10 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     const nextIndex = currentIndex <= 0 ? queue.length - 1 : currentIndex - 1;
     setCurrentIndex(nextIndex);
     const nextTrack = queue[nextIndex];
+    lastSeekRef.current = -1;
     setTime(0);
     setDuration(nextTrack.duration);
+    intendedPlayRef.current = true;
     sendPlayer({ type: 'load', videoId: nextTrack.videoId });
     setPlaying(true);
   };
@@ -216,9 +265,11 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     // Let the engine confirm state via onStatus callback; we optimistically
     // flip the UI so it feels instant.
     if (playing) {
+      intendedPlayRef.current = false;
       sendPlayer({ type: 'pause' });
       setPlaying(false);
     } else {
+      intendedPlayRef.current = true;
       sendPlayer({ type: 'play' });
       setPlaying(true);
     }
@@ -304,6 +355,34 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     setLikedSongs(await DB.toggleLike(track));
   };
 
+  const seekTo = useCallback((seconds: number) => {
+    if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
+    const max = duration > 0 ? duration : undefined;
+    const clamped = max !== undefined ? Math.min(seconds, max) : seconds;
+    // Record target so the tick filter knows what position to expect.
+    lastSeekRef.current = clamped;
+    setTime(clamped);
+    sendPlayer({ type: 'seek', seconds: clamped });
+  }, [duration, sendPlayer]);
+
+  const beginSeek = useCallback((seconds: number) => {
+    setIsSeeking(true);
+    setSeekTime(seconds);
+  }, []);
+
+  const updateSeek = useCallback((seconds: number) => {
+    setSeekTime(seconds);
+  }, []);
+
+  const endSeek = useCallback((seconds: number) => {
+    setIsSeeking(false);
+    seekTo(seconds);
+  }, [seekTo]);
+
+  const cancelSeek = useCallback(() => {
+    setIsSeeking(false);
+  }, []);
+
   const createPlaylist = async (name: string) => {
     if (!name.trim()) return false;
     await DB.createPlaylist(name.trim());
@@ -331,15 +410,34 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     if (msg.type === 'ready') setReady(true);
     if (msg.type === 'state') {
       if (msg.payload.state === 0) next(true);
-      if (msg.payload.state === 1) setPlaying(true);
+      // Only accept state=1 (playing) if we intended the player to be playing.
+      // YouTube can fire spurious 'playing' events after buffering even when the
+      // user already pressed pause — this guard prevents that from re-enabling
+      // the timer and advancing the UI.
+      if (msg.payload.state === 1 && intendedPlayRef.current) setPlaying(true);
       if (msg.payload.state === 2) setPlaying(false);
     }
     if (msg.type === 'tick') {
-      setTime(msg.payload.time || 0);
+      if (!isSeeking) {
+        const reported = msg.payload.time || 0;
+        const target = lastSeekRef.current;
+        if (target >= 0) {
+          // Post-seek: only accept this tick once YouTube confirms it has reached
+          // within 2 s of the seeked position. Until then, keep time pinned at
+          // the target so the slider / timer never snap back to the old position.
+          if (Math.abs(reported - target) <= 2) {
+            lastSeekRef.current = -1; // confirmed — resume normal tick handling
+            setTime(reported);
+          }
+          // else: stale tick from before the seek completed — skip it
+        } else {
+          setTime(reported);
+        }
+      }
       if (msg.payload.duration > 0) setDuration(msg.payload.duration);
     }
     if (msg.type === 'error') flash(`Playback error: ${msg.payload?.code || 'unknown'}`);
-  }, [flash, next]);
+  }, [flash, isSeeking, next]);
 
   const value = useMemo<MusicContextType>(() => ({
     ready,
@@ -347,6 +445,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     currentIndex,
     playing,
     time,
+    displayTime,
     duration,
     volume,
     repeat,
@@ -367,7 +466,9 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     likedSongs,
     userPlaylists,
     current,
+    hasActiveMedia,
     shownPlaylistSongs,
+    isSeeking,
     setView,
     setQuery,
     setSearchTab,
@@ -388,13 +489,18 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     createPlaylist,
     addToPlaylist,
     removeFromPlaylist,
+    seekTo,
+    beginSeek,
+    updateSeek,
+    endSeek,
+    cancelSeek,
     handlePlayerMessage,
     registerSender,
   }), [
-    ready, queue, currentIndex, playing, time, duration, volume, repeat, shuffle, view, query, searchTab,
+    ready, queue, currentIndex, playing, time, displayTime, duration, volume, repeat, shuffle, view, query, searchTab,
     loading, loadingMore, toast, trending, popularPlaylists, searchSongs, searchPls, playlistSongs,
-    activePlaylist, activeUserPlaylist, likedSongs, userPlaylists, current, shownPlaylistSongs,
-    runSearch, openPlaylist, loadMoreContent, next, handlePlayerMessage, registerSender,
+    activePlaylist, activeUserPlaylist, likedSongs, userPlaylists, current, hasActiveMedia, shownPlaylistSongs, duration, isSeeking,
+    runSearch, openPlaylist, loadMoreContent, next, seekTo, beginSeek, updateSeek, endSeek, cancelSeek, handlePlayerMessage, registerSender,
   ]);
 
   return <MusicContext.Provider value={value}>{children}</MusicContext.Provider>;

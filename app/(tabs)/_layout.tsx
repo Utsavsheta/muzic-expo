@@ -3,8 +3,9 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { PlayerBar } from '../../src/components/PlayerBar';
 import { theme } from '../../src/theme';
+
+export const TAB_BAR_HEIGHT = 58;
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 
@@ -21,7 +22,6 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
 
   return (
     <View style={styles.wrapper}>
-      <PlayerBar />
       <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         {state.routes.map((route, index) => {
           const isFocused = state.index === index;
@@ -90,7 +90,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
+    paddingVertical: 7,
     gap: 3,
   },
   tabLabel: {

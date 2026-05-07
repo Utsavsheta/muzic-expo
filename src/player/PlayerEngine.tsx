@@ -1,77 +1,45 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
-import YoutubePlayer, { type YoutubeIframeRef } from 'react-native-youtube-iframe';
+import WebView from 'react-native-webview';
 import { useMusic } from '../store/player-store';
+import { playerHtml } from './player-html';
+
+// Stable module-level constant — never recreated, so WebView never reloads.
+const SOURCE = { html: playerHtml(), baseUrl: 'https://lonelycpp.github.io' };
 
 export function PlayerEngine() {
-  const playerRef = useRef<YoutubeIframeRef | null>(null);
-  const [videoId, setVideoId] = useState<string | undefined>(undefined);
-  const [playing, setPlaying] = useState(false);
-  const [volume, setVolume] = useState(70);
+  const webViewRef = useRef<WebView | null>(null);
   const { handlePlayerMessage, registerSender } = useMusic();
 
   useEffect(() => {
-    registerSender(async (data: any) => {
-      try {
-        switch (data.type) {
-          case 'load':
-            setVideoId(data.videoId);
-            setPlaying(true);
-            break;
-          case 'play':
-            setPlaying(true);
-            break;
-          case 'pause':
-            setPlaying(false);
-            break;
-          case 'seek':
-            playerRef.current?.seekTo(data.seconds ?? 0, true);
-            break;
-          case 'volume':
-            setVolume(data.volume ?? 100);
-            break;
-          case 'tick': {
-            const p = playerRef.current;
-            if (!p) break;
-            const [time, duration] = await Promise.all([
-              p.getCurrentTime().catch(() => 0),
-              p.getDuration().catch(() => 0),
-            ]);
-            handlePlayerMessage({ type: 'tick', payload: { time, duration } });
-            break;
-          }
-        }
-      } catch (err: any) {
-        handlePlayerMessage({ type: 'error', payload: { code: err?.message ?? 'unknown' } });
-      }
+    // Sender injects JS directly into the WebView so commands are reliable
+    // and synchronous — no React render cycle required, no play-prop race.
+    registerSender((data: any) => {
+      webViewRef.current?.injectJavaScript(
+        `window.handleCmd(${JSON.stringify(data)});true;`,
+      );
     });
-  }, [handlePlayerMessage, registerSender]);
+  }, [registerSender]);
 
   return (
     <View style={styles.offscreenWrap} pointerEvents="none">
-      <YoutubePlayer
-        ref={playerRef}
-        height={220}
-        width={220}
-        videoId={videoId}
-        play={playing}
-        volume={volume}
-        initialPlayerParams={{ controls: false, preventFullScreen: true, rel: false }}
-        onReady={() => {
-          handlePlayerMessage({ type: 'ready' });
+      <WebView
+        ref={webViewRef}
+        source={SOURCE}
+        onMessage={(event) => {
+          try {
+            // handlePlayerMessage is read from the latest render closure here,
+            // so isSeeking and next are always current.
+            handlePlayerMessage(JSON.parse(event.nativeEvent.data));
+          } catch {}
         }}
-        onChangeState={(state: string) => {
-          if (state === 'ended') handlePlayerMessage({ type: 'state', payload: { state: 0 } });
-          else if (state === 'playing') handlePlayerMessage({ type: 'state', payload: { state: 1 } });
-          else if (state === 'paused') handlePlayerMessage({ type: 'state', payload: { state: 2 } });
-        }}
-        onError={(error: string) => {
-          handlePlayerMessage({ type: 'error', payload: { code: error || 'unknown' } });
-        }}
-        webViewProps={{
-          allowsInlineMediaPlayback: true,
-          mediaPlaybackRequiresUserAction: false,
-        }}
+        allowsInlineMediaPlayback
+        mediaPlaybackRequiresUserAction={false}
+        scrollEnabled={false}
+        javaScriptEnabled
+        domStorageEnabled
+        mixedContentMode="always"
+        style={styles.player}
       />
     </View>
   );
@@ -79,4 +47,5 @@ export function PlayerEngine() {
 
 const styles = StyleSheet.create({
   offscreenWrap: { position: 'absolute', left: -1000, top: -1000, opacity: 0 },
+  player: { width: 240, height: 135 },
 });

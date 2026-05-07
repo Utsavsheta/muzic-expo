@@ -5,7 +5,9 @@
       "Bash(node -e ' *)",
       "Bash(npx tsc *)",
       "Bash(npm install *)",
-      "Bash(npx expo *)"
+      "Bash(npx expo *)",
+      "Bash(Get-ChildItem -Path \"d:\\\\Projects\\\\React-Native\\\\muzic-expo\" -Directory)",
+      "Bash(Select-Object Name)"
     ]
   }
 }

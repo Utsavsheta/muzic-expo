@@ -16,6 +16,11 @@ export function playerHtml(): string {
 var yt = null;
 var adActive = false;
 
+// Tracks the last position we explicitly seeked to.
+// Re-applied before playVideo() to guard against YouTube resetting position
+// during buffering (which can cause the video to restart from 0 on resume).
+var pendingSeekSeconds = -1;
+
 function post(type, payload) {
   try {
     window.ReactNativeWebView.postMessage(JSON.stringify({ type: type, payload: payload || {} }));
@@ -73,16 +78,26 @@ window.handleCmd = function(msg) {
     if (!yt || typeof yt.playVideo !== 'function') return;
     switch (msg.type) {
       case 'load':
+        // Reset pending seek on a new video load.
+        pendingSeekSeconds = -1;
         yt.loadVideoById(msg.videoId);
         break;
       case 'play':
+        // Re-apply the last explicit seek before starting playback.
+        // YouTube can reset position to 0 during buffering after a seekTo(),
+        // so we re-seek here to guarantee the correct start position.
+        if (pendingSeekSeconds >= 0) {
+          yt.seekTo(pendingSeekSeconds, true);
+          pendingSeekSeconds = -1;
+        }
         yt.playVideo();
         break;
       case 'pause':
         yt.pauseVideo();
         break;
       case 'seek':
-        yt.seekTo(msg.seconds || 0, true);
+        pendingSeekSeconds = msg.seconds || 0;
+        yt.seekTo(pendingSeekSeconds, true);
         break;
       case 'volume':
         if (!adActive) yt.setVolume(msg.volume);

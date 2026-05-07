@@ -1,95 +1,68 @@
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useMemo } from 'react';
+import { useRouter } from 'expo-router';
 import { useMusic } from '../store/player-store';
-import { fmtTime } from '../utils/time';
 import { theme } from '../theme';
 
+export const PLAYER_BAR_HEIGHT = 70;
+
+const ARTWORK_SIZE = 46;
+
 export function PlayerBar() {
+  const router = useRouter();
   const {
     current,
+    hasActiveMedia,
     playing,
-    time,
+    displayTime,
     duration,
-    repeat,
-    likedSongs,
     togglePlay,
     previous,
     next,
-    setRepeat,
-    toggleLike,
   } = useMusic();
 
-  const pct = duration > 0 ? Math.min(1, time / duration) : 0;
-  const liked = useMemo(
-    () => !!current && likedSongs.some((s) => s.videoId === current.videoId),
-    [current, likedSongs],
-  );
-  const repeatIcon: 'repeat' | 'repeat-outline' | 'return-down-forward-outline' =
-    repeat === 'one'
-      ? 'return-down-forward-outline'
-      : repeat === 'all'
-      ? 'repeat'
-      : 'repeat-outline';
+  if (!hasActiveMedia || !current) return null;
+
+  const progress = duration > 0 ? Math.min(1, Math.max(0, displayTime / duration)) : 0;
 
   return (
-    <View style={styles.container}>
-      {/* Progress bar */}
+    <Pressable style={styles.container} onPress={() => router.push('/player')}>
+      {/* Thin accent progress line — shows where we are at a glance */}
       <View style={styles.progressTrack}>
-        <View style={[styles.progressFill, { width: `${pct * 100}%` as any }]} />
+        <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
       </View>
 
-      <View style={styles.inner}>
-        {/* Thumbnail */}
-        {current ? (
-          <Image source={{ uri: current.thumbnail }} style={styles.thumb} />
-        ) : (
-          <View style={[styles.thumb, styles.thumbEmpty]}>
-            <Ionicons name="musical-note" size={18} color={theme.colors.muted} />
-          </View>
-        )}
-
-        {/* Song info — flex:1 so it shrinks before controls do */}
-        <View style={styles.info}>
-          <Text style={styles.songTitle} numberOfLines={1}>
-            {current?.title ?? 'Nothing playing'}
-          </Text>
-
-          {/* Second row: artist (shrinks) + time (never shrinks) */}
-          <View style={styles.metaRow}>
-            <Text style={styles.artistText} numberOfLines={1}>
-              {current?.channelTitle ?? 'Select a track to play'}
-            </Text>
-            {current && (
-              <Text style={styles.timeText} numberOfLines={1}>
-                {fmtTime(time)}&thinsp;/&thinsp;{fmtTime(duration)}
-              </Text>
-            )}
-          </View>
+      {/* Main content */}
+      <View style={styles.row}>
+        {/* Artwork */}
+        <View style={styles.artShadow}>
+          <Image source={{ uri: current.thumbnail }} style={styles.art} />
         </View>
 
-        {/* Controls */}
+        {/* Track info — shrinks before controls do */}
+        <View style={styles.info}>
+          <Text style={styles.title} numberOfLines={1}>
+            {current.title}
+          </Text>
+          <Text style={styles.artist} numberOfLines={1}>
+            {current.channelTitle}
+          </Text>
+        </View>
+
+        {/* Controls: prev | play/pause | next */}
         <View style={styles.controls}>
           <Pressable
-            onPress={() => current && toggleLike(current)}
-            hitSlop={10}
+            onPress={(e) => { e.stopPropagation(); previous(); }}
+            hitSlop={12}
           >
-            <Ionicons
-              name={liked ? 'heart' : 'heart-outline'}
-              size={19}
-              color={liked ? theme.colors.accent : theme.colors.muted}
-            />
+            <Ionicons name="play-skip-back" size={20} color={theme.colors.text} />
           </Pressable>
 
-          <Pressable onPress={previous} hitSlop={10}>
-            <Ionicons
-              name="play-skip-back"
-              size={21}
-              color={current ? theme.colors.text : theme.colors.muted}
-            />
-          </Pressable>
-
-          <Pressable onPress={togglePlay} style={styles.playBtn} hitSlop={6}>
+          <Pressable
+            onPress={(e) => { e.stopPropagation(); togglePlay(); }}
+            style={styles.playBtn}
+            hitSlop={8}
+          >
             <Ionicons
               name={playing ? 'pause' : 'play'}
               size={19}
@@ -98,105 +71,100 @@ export function PlayerBar() {
             />
           </Pressable>
 
-          <Pressable onPress={() => next(false)} hitSlop={10}>
-            <Ionicons
-              name="play-skip-forward"
-              size={21}
-              color={current ? theme.colors.text : theme.colors.muted}
-            />
-          </Pressable>
-
           <Pressable
-            onPress={() =>
-              setRepeat(repeat === 'off' ? 'all' : repeat === 'all' ? 'one' : 'off')
-            }
-            hitSlop={10}
+            onPress={(e) => { e.stopPropagation(); next(false); }}
+            hitSlop={12}
           >
-            <Ionicons
-              name={repeatIcon}
-              size={17}
-              color={repeat !== 'off' ? theme.colors.accent : theme.colors.muted}
-            />
+            <Ionicons name="play-skip-forward" size={20} color={theme.colors.text} />
           </Pressable>
         </View>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
+    height: PLAYER_BAR_HEIGHT,
     backgroundColor: theme.colors.panel,
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 12,
   },
+
+  // ── Progress line ─────────────────────────────────────────────────────────────
   progressTrack: {
     height: 2,
-    backgroundColor: theme.colors.border,
+    backgroundColor: theme.colors.borderStrong,
   },
   progressFill: {
-    height: 2,
+    height: '100%',
     backgroundColor: theme.colors.accent,
+    borderRadius: 1,
   },
-  inner: {
+
+  // ── Content row ───────────────────────────────────────────────────────────────
+  row: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 9,
+    paddingHorizontal: 14,
     gap: 10,
   },
-  thumb: {
-    width: 42,
-    height: 42,
-    borderRadius: theme.radius.sm,
+
+  // ── Artwork ───────────────────────────────────────────────────────────────────
+  artShadow: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.45,
+    shadowRadius: 6,
+    elevation: 6,
+  },
+  art: {
+    width: ARTWORK_SIZE,
+    height: ARTWORK_SIZE,
+    borderRadius: 8,
     backgroundColor: theme.colors.card,
-    flexShrink: 0,
   },
-  thumbEmpty: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+
+  // ── Track info ────────────────────────────────────────────────────────────────
   info: {
     flex: 1,
     minWidth: 0,
     gap: 3,
   },
-  songTitle: {
+  title: {
     color: theme.colors.text,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
+    letterSpacing: -0.1,
   },
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  artistText: {
-    // flex:1 lets the artist name shrink so the time always has room
-    flex: 1,
-    color: theme.colors.muted,
-    fontSize: 11,
+  artist: {
+    color: theme.colors.mutedLight,
+    fontSize: 12,
     fontWeight: '500',
   },
-  timeText: {
-    // flexShrink:0 guarantees the time is NEVER truncated
-    flexShrink: 0,
-    color: theme.colors.accent,
-    fontSize: 11,
-    fontWeight: '700',
-  },
+
+  // ── Controls ──────────────────────────────────────────────────────────────────
   controls: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
     flexShrink: 0,
   },
   playBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: theme.colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: theme.colors.accent,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.5,
+    shadowRadius: 6,
+    elevation: 5,
   },
 });
