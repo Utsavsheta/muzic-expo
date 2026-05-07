@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir node_modules\\\\@react-navigation\\\\bottom-tabs)",
+      "Bash(node -e ' *)",
+      "Bash(npx tsc *)",
+      "Bash(npm install *)",
+      "Bash(npx expo *)"
+    ]
+  }
+}

@@ -1,0 +1,33 @@
+export const theme = {
+  colors: {
+    bg: '#0A0A0A',
+    bgSecondary: '#111111',
+    panel: '#141414',
+    card: '#1C1C1C',
+    cardActive: '#252525',
+    muted: '#5A5A5A',
+    mutedLight: '#9A9A9A',
+    text: '#FFFFFF',
+    textSecondary: '#AAAAAA',
+    accent: '#EF4444',
+    accentDark: '#B91C1C',
+    accentDim: 'rgba(239,68,68,0.12)',
+    border: '#1E1E1E',
+    borderStrong: '#2E2E2E',
+  },
+  spacing: {
+    xs: 4,
+    sm: 8,
+    md: 12,
+    lg: 16,
+    xl: 20,
+    xxl: 28,
+  },
+  radius: {
+    sm: 6,
+    md: 10,
+    lg: 14,
+    xl: 20,
+    full: 999,
+  },
+};
